@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>どこから来たか 集計フォーム</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans JP", Arial; padding: 20px; max-width:800px; margin:auto; }
+  label { display:block; margin-top:12px; font-weight:600; }
+  .inline { display:inline-block; margin-right:10px; }
+  select, input[type="text"], button, textarea { width:100%; padding:8px; margin-top:6px; box-sizing:border-box; font-size:15px; }
+  .small { width:auto; display:inline-block; }
+  .hint { font-size:13px; color:#555; margin-top:6px; }
+  .hidden { display:none; }
+  .result { margin-top:12px; padding:10px; border-radius:6px; }
+  .success { background:#e6ffed; border:1px solid #b7f0c7; }
+  .error { background:#ffe6e6; border:1px solid #f0b7b7; }
+</style>
+</head>
+<body>
+  <h1>高校訪問 — 出身中学 集計フォーム</h1>
+  <p class="hint">※中学生だけ「中学校を選択」できます。ひらがな読みで絞り込み可能（例：「とう」）。</p>
+
+  <form id="visitForm">
+    <label>あなたのカテゴリ</label>
+    <div>
+      <label class="inline"><input type="radio" name="category" value="中学生" checked> 中学生</label>
+      <label class="inline"><input type="radio" name="category" value="大人"> 大人</label>
+      <label class="inline"><input type="radio" name="category" value="中学生未満"> 中学生未満</label>
+    </div>
+
+    <div id="middleSchoolBlock">
+      <label>中学校のひらがな（部分）で絞る — 例: 「とう」</label>
+      <input type="text" id="kanaFilter" placeholder="ひらがなで入力（例: とう）">
+
+      <label>候補の中学校を選ぶ</label>
+      <select id="schoolSelect" size="6" style="height:180px;"></select>
+
+      <div class="hint">選択肢にない場合は下の「学校名を直接入力」に書いてください。</div>
+    </div>
+
+    <label>学校名を直接入力（候補にない場合）</label>
+    <input type="text" id="schoolManual" placeholder="東京都立東京中学校(仮名) のように入力">
+
+    <label>学校名の読み（ひらがな） — 省力化のため未入力なら自動推定（カタカナ→ひらがな）します</label>
+    <input type="text" id="schoolReading" placeholder="とうきょうちゅうがっこう">
+
+    <label>補足（学年や備考など）</label>
+    <textarea id="extra" rows="3" placeholder="例：2年、見学のため来校"></textarea>
+
+    <button type="submit" id="submitBtn">送信</button>
+  </form>
+
+  <div id="message" class="result hidden"></div>
+
+<script>
+
+const schools = [
+  { name: "東京都立東京中学校(仮名)", reading: "とうきょうちゅうがっこう" },
+  { name: "品川区立東中学校", reading: "しながわくりつひがしちゅうがっこう" },
+  { name: "大田中学校", reading: "おおたちゅうがっこう" },
+  { name: "練馬区立桜中学校", reading: "ねりまくりつさくらちゅうがっこう" },
+  { name: "北海道立東光中学校", reading: "ほっかいどうりつとうこうちゅうがっこう" },
+  { name: "東京学園中学校", reading: "とうきょうがくえんちゅうがっこう" }
+];
+
+const WEB_APP_URL = 'https://script.google.com/macros/s/YOUR_DEPLOY_ID/exec';
+
+function katakanaToHiragana(s) {
+  return s.replace(/[\u30A1-\u30F6]/g, function(ch) {
+    return String.fromCharCode(ch.charCodeAt(0) - 0x60);
+  });
+}
+function normalizeKanaInput(s) {
+  if (!s) return '';
+  s = s.trim().replace(/\s+/g, '');
+  s = katakanaToHiragana(s);
+  return s;
+}
+
+const categoryRadios = document.getElementsByName('category');
+const middleSchoolBlock = document.getElementById('middleSchoolBlock');
+const kanaFilter = document.getElementById('kanaFilter');
+const schoolSelect = document.getElementById('schoolSelect');
+const schoolManual = document.getElementById('schoolManual');
+const schoolReading = document.getElementById('schoolReading');
+const extra = document.getElementById('extra');
+const submitBtn = document.getElementById('submitBtn');
+const messageBox = document.getElementById('message');
+const form = document.getElementById('visitForm');
+
+function populateAllSchools() {
+  schoolSelect.innerHTML = '';
+  schools.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.name;
+    opt.textContent = s.name + ' — ' + s.reading;
+    opt.dataset.reading = s.reading;
+    schoolSelect.appendChild(opt);
+  });
+}
+populateAllSchools();
+
+function updateCategoryDisplay() {
+  const cat = getSelectedCategory();
+  if (cat === '中学生') {
+    middleSchoolBlock.classList.remove('hidden');
+    schoolSelect.size = 6;
+  } else {
+    middleSchoolBlock.classList.add('hidden');
+    schoolSelect.selectedIndex = -1;
+  }
+}
+function getSelectedCategory() {
+  for (const r of categoryRadios) if (r.checked) return r.value;
+  return null;
+}
+Array.from(categoryRadios).forEach(r => r.addEventListener('change', updateCategoryDisplay));
+updateCategoryDisplay();
+
+function filterSchoolsByKanaFragment(fragment) {
+  fragment = normalizeKanaInput(fragment);
+  if (!fragment) {
+    populateAllSchools();
+    return;
+  }
+  schoolSelect.innerHTML = '';
+  const matched = schools.filter(s => s.reading.indexOf(fragment) !== -1);
+  if (matched.length === 0) {
+    const opt = document.createElement('option');
+    opt.textContent = '一致する学校がありません';
+    opt.disabled = true;
+    schoolSelect.appendChild(opt);
+    schoolSelect.selectedIndex = -1;
+    return;
+  }
+  matched.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.name;
+    opt.textContent = s.name + ' — ' + s.reading;
+    opt.dataset.reading = s.reading;
+    schoolSelect.appendChild(opt);
+  });
+}
+kanaFilter.addEventListener('input', function() {
+  filterSchoolsByKanaFragment(this.value);
+});
+
+schoolSelect.addEventListener('change', function() {
+  const opt = this.selectedOptions[0];
+  if (!opt) return;
+  schoolManual.value = opt.value;
+  if (opt.dataset && opt.dataset.reading) {
+    schoolReading.value = opt.dataset.reading;
+  }
+});
+
+schoolManual.addEventListener('blur', function() {
+  if (!schoolReading.value.trim()) {
+    schoolReading.value = katakanaToHiragana(this.value);
+  }
+});
+
+async function postToServer(payload) {
+  const res = await fetch(WEB_APP_URL, {
+    method: 'POST',
+    mode: 'cors',
+    cache: 'no-cache',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+  const json = await res.json();
+  return json;
+}
+
+function showMessage(text, ok=true) {
+  messageBox.className = 'result ' + (ok ? 'success' : 'error');
+  messageBox.textContent = text;
+  messageBox.classList.remove('hidden');
+}
+
+form.addEventListener('submit', async function(ev) {
+  ev.preventDefault();
+  submitBtn.disabled = true;
+  messageBox.classList.add('hidden');
+
+  const category = getSelectedCategory();
+  let selectedSchoolName = '';
+  let selectedSchoolReading = '';
+
+  if (category === '中学生') {
+    const opt = schoolSelect.selectedOptions[0];
+    if (opt && !opt.disabled) {
+      selectedSchoolName = opt.value;
+      selectedSchoolReading = opt.dataset.reading || '';
+    }
+  }
+
+  if (!selectedSchoolName) {
+    selectedSchoolName = schoolManual.value.trim();
+  }
+  selectedSchoolReading = schoolReading.value.trim() || selectedSchoolReading || normalizeKanaInput(selectedSchoolName);
+
+  if (!category) {
+    showMessage('カテゴリを選んでください', false);
+    submitBtn.disabled = false;
+    return;
+  }
+  if (category === '中学生' && !selectedSchoolName) {
+    showMessage('中学生を選んだ場合は中学校を選択するか、学校名を入力してください', false);
+    submitBtn.disabled = false;
+    return;
+  }
+
+  const payload = {
+    category: category,
+    schoolName: selectedSchoolName,
+    schoolReading: selectedSchoolReading,
+    extra: extra.value.trim(),
+    clientInfo: navigator.userAgent
+  };
+
+  try {
+    const resp = await postToServer(payload);
+    if (resp && resp.success) {
+      showMessage('送信成功');
+      form.reset();
+      populateAllSchools();
+      updateCategoryDisplay();
+    } else {
+      const err = resp && resp.error ? resp.error : '不明なエラー';
+      showMessage('送信に失敗しました：' + err, false);
+    }
+  } catch (err) {
+    showMessage('ネットワークえrー：' + err.message, false);
+  } finally {
+    submitBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
